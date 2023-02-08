@@ -1,0 +1,68 @@
+USE [master]
+GO
+
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE TABLE [dbo].[data_test](                                       /* скопировано из SSMS */
+	[record_id] [varchar](50) NOT NULL,
+	[service_date] [varchar](50) NULL,
+	[l_code] [varchar](50) NULL,
+	[service_amount] [varchar](50) NULL,
+	[service_number] [varchar](50) NULL,
+	[insured] [varchar](50) NULL,
+	[date_of_birth] [varchar](50) NULL,
+	[sex_id] [varchar](50) NULL
+) ON [PRIMARY]
+GO;
+
+alter table data_test add age int null, age_gr varchar (10) null, service_amount2 float null, service_number2 float null;
+
+update data_test set service_amount2 = CONVERT(float, service_amount), service_number2 = CONVERT(float, service_number);
+
+alter table data_test drop COLUMN service_amount, service_number;
+
+delete from data_test where service_amount2 = 0 or service_number2 = 0 or service_amount2 > 500000;                               /* удаление лишних строк */
+
+update data_test set record_id = SUBSTRING(record_id,1, LEN(record_id) - 2),
+                     insured = iif(LEN(insured) > 2, SUBSTRING(insured,1, LEN(insured) - 2), '');                                 /* удаляем лишние знаки */
+
+update data_test set age = (datediff(year, date_of_birth, service_date) -                                                         /* возраст */
+	case when month(service_date) > month(date_of_birth)
+	or month(service_date) = month(date_of_birth) 
+	and day(service_date) >= day(date_of_birth)
+	then 0 else 1 end);
+
+update data_test set age_gr = case                                                                                                /* возрастная группа */
+             when age < 18 then '0-18'
+             when age >= 18 and age < 40 then '18-40'
+             when age >= 40 and age < 60 then '40-60'
+             when age >= 60 and age < 80 then '60-80' else '80+' end;
+
+select convert(date, concat(year(service_date), '-' , month(service_date),'-01')) mon, round(avg(service_amount2*service_number2),2) aver_sale        /* средний чек по месяцам топ 10 клиник */
+       from data_test 
+	   where l_code in (select distinct l_code from (select top 10 l_code, count(*) quant from data_test group by l_code order by quant desc) t)
+	   group by year(service_date), month(service_date) order by year(service_date), month(service_date);
+
+select mon, sex_id, age_gr, sum(cnt_vis) visits, sum(cnt_case) cases, count(insured) clients, round(sum(sales),2) sale_sum 
+	from (select convert(date, concat(year(service_date), '-' , month(service_date),'-01')) mon, sex_id, age_gr, insured, count(*) cnt_vis, sum(ss) sales,
+		   count(case when diff_date is null or diff_date > 14 then 1 end) cnt_case
+				from (select service_date, sex_id, age_gr, insured, l_code, count(*) vis, sum(service_amount2*service_number2) ss,
+					 datediff(day,  convert(date, lag(service_date) over(partition by insured, l_code order by insured, l_code, service_date)), convert(date, service_date)) diff_date
+					 from data_test group by service_date, insured, l_code, sex_id, age_gr) t
+				group by year(service_date), month(service_date), sex_id, age_gr, insured) ta
+	group by mon, sex_id, age_gr order by mon, sex_id, age_gr
+
+select mon, sex_id, age_gr, sum(cnt_vis) visits, sum(cnt_case) cases, count(insured) clients, round(sum(sales),2) sale_sum from
+	(select convert(date, concat(year(service_date), '-' , month(service_date),'-01')) mon, sex_id, age_gr, insured, sum(cases) cnt_case, count(*) cnt_vis, sum(ss) sales from
+		(select service_date, sex_id, age_gr, insured, l_code, count(*) vis, count(case when diff_date is null or diff_date > 14 then 1 end) cases, sum(service_amount2*service_number2) ss        
+			from (select *, datediff(day,  convert(date, lag(service_date) over(partition by insured, l_code order by insured, l_code, service_date)), convert(date, service_date)) diff_date from data_test) t 
+			group by service_date, insured, l_code, sex_id, age_gr) ta
+		group by year(service_date), month(service_date), sex_id, age_gr, insured) tab
+	group by mon, sex_id, age_gr order by mon, sex_id, age_gr; 
+
+
+
